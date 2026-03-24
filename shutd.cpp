@@ -1,5 +1,8 @@
 /*
  * shutd.cpp - Shutdown/Reboot wrapper with TUI, Arrow Keys, and Inhibitor Check
+ * Programmed By Adil Haimoura 2026/03/21 
+ * adilhaimoura@gmail.com
+ * Licensed under MIT license  use/fork/modify/contribute
  */
 
 #include <iostream>
