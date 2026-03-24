@@ -35,7 +35,7 @@ Featuring a real-time Terminal UI, interactive safety buttons, and inhibitor awa
 
 Clone the repository and compile the source code using `g++`:
 
-    git clone https://github.com/YOUR_USERNAME/PowerTUI.git
+    git clone https://github.com/adilhaimoura/PowerTUI.git
     cd PowerTUI
     g++ shutd.cpp -o shutd
 
