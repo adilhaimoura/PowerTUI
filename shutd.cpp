@@ -1,8 +1,23 @@
 /*
- * shutd.cpp - Shutdown/Reboot wrapper with TUI, Arrow Keys, and Inhibitor Check
- * Programmed By Adil Haimoura 2026/03/21 
- * adilhaimoura@gmail.com
- * Licensed under MIT license  use/fork/modify/contribute
+ * PowerTUI (shutd) - A High-Precision Shutdown/Reboot Wrapper
+ * * MIT License
+ * * Copyright (c) 2026 Adil
+ * * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
+ * * The above copyright notice and this permission notice shall be included in all
+ * copies or substantial portions of the Software.
+ * * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ * SOFTWARE.
+ adilhaimoura@gmail.com
  */
 
 #include <iostream>
@@ -20,6 +35,8 @@
 #include <sys/select.h>
 #include <sstream>
 #include <vector>
+#include <cstdio>
+#include <memory>
 
 // ANSI Colors
 constexpr const char* GREEN  = "\033[32m";
@@ -35,15 +52,26 @@ constexpr const char* BG_RED   = "\033[41m";
 
 std::atomic<bool> interrupted(false);
 
-// Function to check if other apps are blocking shutdown
-bool is_system_inhibited() {
-    // We check for inhibitors that specifically block "shutdown"
-    // redirecting stderr to dev/null to keep the TUI clean
-    int status = std::system("systemd-inhibit --list --mode=block 2>/dev/null | grep -q 'shutdown'");
-    return (status == 0);
+// Function to get the first active inhibitor description from systemd
+std::string get_inhibitor_reason() {
+    char buffer[128];
+    std::string result = "";
+    // Note: This specifically targets systemd. See documentation for non-systemd distros.
+    std::string cmd = "systemd-inhibit --list --mode=block --no-pager 2>/dev/null | grep 'shutdown' | head -n 1 | awk -F'  +' '{print $1 \" (\" $4 \")\"}'";
+    
+    auto deleter = [](FILE* f) { if (f) pclose(f); };
+    std::unique_ptr<FILE, decltype(deleter)> pipe(popen(cmd.c_str(), "r"), deleter);
+    
+    if (!pipe) return "";
+
+    if (fgets(buffer, sizeof(buffer), pipe.get()) != nullptr) {
+        result = buffer;
+        if (!result.empty() && result[result.length()-1] == '\n') 
+            result.erase(result.length()-1);
+    }
+    return result;
 }
 
-// Raw mode handling
 void set_raw_mode(bool enable) {
     static struct termios oldt;
     static bool saved = false;
@@ -55,24 +83,20 @@ void set_raw_mode(bool enable) {
             saved = true;
         }
         newt = oldt;
-        newt.c_lflag &= ~(ICANON | ECHO);
-        newt.c_lflag &= ~(ISIG); 
+        newt.c_lflag &= ~(ICANON | ECHO | ISIG); 
         tcsetattr(STDIN_FILENO, TCSANOW, &newt);
-        std::cout << "\033[?25l" << std::flush; // Hide cursor
+        std::cout << "\033[?25l" << std::flush;
     } else if (saved) {
         tcsetattr(STDIN_FILENO, TCSANOW, &oldt);
-        std::cout << "\033[?25h" << std::flush; // Show cursor
+        std::cout << "\033[?25h" << std::flush;
     }
 }
 
-void handle_signal(int) {
-    interrupted.store(true);
-}
+void handle_signal(int) { interrupted.store(true); }
 
 int term_width() {
     struct winsize w;
-    if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &w) == 0 && w.ws_col > 0)
-        return w.ws_col;
+    if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &w) == 0 && w.ws_col > 0) return w.ws_col;
     return 80;
 }
 
@@ -81,8 +105,8 @@ std::string strip_ansi(const std::string& s) {
     bool in_escape = false;
     for (size_t i = 0; i < s.size(); ++i) {
         if (!in_escape && s[i] == '\033') { in_escape = true; continue; }
-        if (!in_escape) { result += s[i]; } 
-        else if (s[i] == 'm') { in_escape = false; }
+        if (!in_escape) result += s[i];
+        else if (s[i] == 'm') in_escape = false;
     }
     return result;
 }
@@ -96,28 +120,19 @@ bool is_positive(const std::string& s) {
 void draw_buttons(int width, bool focus_shutdown, bool is_reboot) {
     int inner = width - 4;
     if (inner < 20) inner = 20;
-
-    std::string btn_action = is_reboot ? "[  Reboot now  ]" : "[ Shutdown now ]";
-    std::string btn_cancel = "[    Cancel    ]";
-
-    int total_len = btn_action.size() + 3 + btn_cancel.size();
+    std::string b1 = is_reboot ? "[  Reboot now  ]" : "[ Shutdown now ]";
+    std::string b2 = "[    Cancel    ]";
+    int total_len = (int)b1.size() + 3 + (int)b2.size();
     int left_pad = (inner - total_len) / 2;
     if (left_pad < 0) left_pad = 0;
 
     std::cout << "│ ";
     for (int i = 0; i < left_pad; ++i) std::cout << " ";
-
-    if (focus_shutdown) std::cout << BG_WHITE << RED << btn_action << RESET;
-    else std::cout << btn_action;
-
+    if (focus_shutdown) std::cout << BG_WHITE << RED << b1 << RESET; else std::cout << b1;
     std::cout << "   ";
-
-    if (!focus_shutdown) std::cout << BG_WHITE << RED << btn_cancel << RESET;
-    else std::cout << btn_cancel;
-
+    if (!focus_shutdown) std::cout << BG_WHITE << RED << b2 << RESET; else std::cout << b2;
     int used = left_pad + total_len;
-    int remaining = inner - used;
-    for (int i = 0; i < remaining; ++i) std::cout << " ";
+    for (int i = 0; i < inner - used; ++i) std::cout << " ";
     std::cout << " │\n";
 }
 
@@ -126,7 +141,6 @@ void draw_ui(int width, const std::string& timer_line, int total, int remaining,
     if (inner < 20) inner = 20;
     int filled = (total > 0) ? ((total - remaining) * inner) / total : 0;
     bool alert = (remaining <= 10);
-
     std::string clean = strip_ansi(timer_line);
     int pad = inner - static_cast<int>(clean.size());
     if (pad < 0) pad = 0;
@@ -135,9 +149,7 @@ void draw_ui(int width, const std::string& timer_line, int total, int remaining,
     for (int i = 0; i < width - 2; ++i) std::cout << "─";
     std::cout << "┐\n";
 
-    std::cout << "│ " << timer_line;
-    for (int i = 0; i < pad; ++i) std::cout << " ";
-    std::cout << " │\n";
+    std::cout << "│ " << timer_line << std::string(pad, ' ') << " │\n";
 
     std::cout << "│ ";
     for (int i = 0; i < inner; ++i) {
@@ -154,20 +166,26 @@ void draw_ui(int width, const std::string& timer_line, int total, int remaining,
 }
 
 int countdown(int total_seconds, bool reboot) {
-    int width = term_width();
-    if (width < 40) width = 40;
-    int initial = total_seconds;
+    int width = term_width(); if (width < 45) width = 45;
     bool focus_shutdown = true;
+
+    auto start_time = std::chrono::steady_clock::now();
+    auto target_time = start_time + std::chrono::seconds(total_seconds);
 
     std::cout << "\n\n\n\n";
     set_raw_mode(true);
 
-    while (total_seconds >= 0 && !interrupted.load()) {
-        std::cout << "\033[5F"; // Move cursor up 5 lines
+    while (!interrupted.load()) {
+        auto now = std::chrono::steady_clock::now();
+        auto diff = std::chrono::duration_cast<std::chrono::seconds>(target_time - now).count();
+        
+        int remaining = static_cast<int>(diff);
+        if (remaining < 0) break;
 
-        int min = total_seconds / 60;
-        int sec = total_seconds % 60;
-        bool alert = (total_seconds <= 10);
+        std::cout << "\033[5F"; 
+        int min = remaining / 60;
+        int sec = remaining % 60;
+        bool alert = (remaining <= 10);
 
         std::ostringstream line;
         line << (alert ? RED : GREEN) << (reboot ? "Reboot in: " : "Shutdown in: ") << RESET
@@ -175,34 +193,30 @@ int countdown(int total_seconds, bool reboot) {
              << std::setw(2) << std::setfill('0') << min << ":"
              << std::setw(2) << std::setfill('0') << sec << RESET;
 
-        draw_ui(width, line.str(), initial, total_seconds, focus_shutdown, reboot);
+        draw_ui(width, line.str(), total_seconds, remaining, focus_shutdown, reboot);
         std::fflush(stdout);
 
-        auto end = std::chrono::steady_clock::now() + std::chrono::seconds(1);
-        while (std::chrono::steady_clock::now() < end) {
-            fd_set readfds; FD_ZERO(&readfds); FD_SET(STDIN_FILENO, &readfds);
-            struct timeval tv = {0, 100000}; // 100ms poll
-
-            if (select(STDIN_FILENO + 1, &readfds, nullptr, nullptr, &tv) > 0) {
-                char ch;
-                if (read(STDIN_FILENO, &ch, 1) == 1) {
-                    // Arrow Key Handling
-                    if (ch == '\033') {
-                        char n1, n2;
-                        if (read(STDIN_FILENO, &n1, 1) == 1 && n1 == '[') {
-                            if (read(STDIN_FILENO, &n2, 1) == 1) {
-                                if (n2 == 'C' || n2 == 'D') { focus_shutdown = !focus_shutdown; break; }
-                            }
+        fd_set readfds; FD_ZERO(&readfds); FD_SET(STDIN_FILENO, &readfds);
+        struct timeval tv = {0, 50000}; 
+        
+        if (select(STDIN_FILENO + 1, &readfds, nullptr, nullptr, &tv) > 0) {
+            char ch;
+            if (read(STDIN_FILENO, &ch, 1) == 1) {
+                if (ch == '\033') { 
+                    char n1, n2;
+                    if (read(STDIN_FILENO, &n1, 1) == 1 && n1 == '[') {
+                        if (read(STDIN_FILENO, &n2, 1) == 1 && (n2 == 'C' || n2 == 'D')) { 
+                            focus_shutdown = !focus_shutdown; 
                         }
-                    } 
-                    else if (ch == '\t' || ch == ' ' ) { focus_shutdown = !focus_shutdown; break; }
-                    else if (ch == '\n' || ch == '\r') { set_raw_mode(false); return focus_shutdown ? 1 : 0; }
-                    else if (ch == 'c' || ch == 'C' || ch == 3) { interrupted.store(true); set_raw_mode(false); return 0; }
-                }
+                    }
+                } 
+                else if (ch == '\t' || ch == ' ' ) { focus_shutdown = !focus_shutdown; }
+                else if (ch == '\n' || ch == '\r') { set_raw_mode(false); return focus_shutdown ? 1 : 0; }
+                else if (ch == 'c' || ch == 'C' || ch == 3) { interrupted.store(true); break; }
             }
         }
-        --total_seconds;
     }
+    
     set_raw_mode(false);
     return (!interrupted.load()) ? 1 : 0;
 }
@@ -222,22 +236,19 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    int total_seconds = minutes * 60;
+    std::string blocker = get_inhibitor_reason();
+    if (!blocker.empty()) {
+        std::cout << "\033[31m[Critical Error]:\033[0m Shutdown blocked by: " << YELLOW << blocker << RESET << "\n";
+        std::cout << "Terminating program to protect active processes.\n";
+        return 1; 
+    }
 
+    int total_seconds = minutes * 60;
     std::cout << (reboot ? "Reboot" : "Shutdown") << " scheduled for " << minutes << " min\n";
     std::cout << "Arrows/Tab: Switch | Enter: Confirm | 'c': Cancel\n";
 
-    int action = countdown(total_seconds, reboot);
-
-    if (action && !interrupted.load()) {
-        std::cout << "\nChecking for active inhibitors...\n";
-        if (is_system_inhibited()) {
-            std::cout << YELLOW << "![Warning]: SMPlayer, Chrome, or another app is flagging an inhibitor." << RESET << "\n";
-            std::cout << "Override: Executing anyway in 2 seconds...\n";
-            std::this_thread::sleep_for(std::chrono::seconds(2));
-        }
-
-        std::cout << "Executing " << (reboot ? "Reboot" : "Shutdown") << " now...\n";
+    if (countdown(total_seconds, reboot)) {
+        std::cout << "\nExecuting " << (reboot ? "Reboot" : "Shutdown") << " now...\n";
         std::system(reboot ? "reboot" : "shutdown now");
     } else {
         std::cout << (reboot ? "\n\033[31m Reboot Aborted.\033[0m\n" : "\n\033[31m Shutdown Aborted.\033[0m\n");
