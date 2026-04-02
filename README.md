@@ -19,14 +19,17 @@ Featuring a real-time Terminal UI, interactive safety buttons, and inhibitor awa
 *   [🧠 Why PowerTUI?](#why)
 *   [📄 License](#license)
 
-✨ Features
-----------
+## ✨ Features
 
-*   **Interactive TUI:** A clean, ANSI-powered progress bar and button interface directly in your terminal.
-*   **Safety First:** Prevents accidental shutdowns with a "Cancel" focus by default and an interactive confirmation loop.
-*   **Inhibitor Aware:** Automatically checks if applications (like **SMPlayer**, **Chrome**, or **Firefox**) are blocking shutdown via `systemd-inhibit` and warns you before proceeding.
-*   **Zero Dependencies:** Pure C++11. No `ncurses`, no Python, no heavy libraries. Just compile and run.
-*   **Keyboard Optimized:** Full support for `Tab`, `Space`, `Enter`, and `Arrow Keys` without aborting the sequence.
+* **🎯 High-Precision Timing**: Uses the C++ `std::chrono::steady_clock` to prevent clock drift. Stay accurate even under high CPU load.
+* **🛡️ Universal Inhibitor Awareness**: 
+    * **Systemd Systems**: Queries `systemd-inhibit` to identify exactly which app is blocking shutdown.
+    * **Non-Systemd Systems**: Fallback to a process watchlist (`pgrep`) to protect active tasks on Artix, Void, or Gentoo.
+* **🎮 Interactive TUI**: Switch between "Act Now" and "Cancel" using **Arrow Keys**, **Tab**, or **Space**.
+* **🚨 Safety First**: Critical inhibitors trigger an immediate program termination to prevent "ghost" shutdown attempts.
+* **📦 Zero Dependencies**: Pure C++11. No `ncurses` or external libraries required.
+
+---
 
 🚀 Installation
 ---------------
