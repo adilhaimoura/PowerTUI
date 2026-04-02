@@ -1,7 +1,7 @@
 /*
- * PowerTUI (shutd) - A High-Precision Shutdown/Reboot Wrapper
+ * PowerTUI (shutd) - A High-Precision Universal Shutdown/Reboot Wrapper
  * * MIT License
- * * Copyright (c) 2026 Adil
+ * Copyright (c) 2026 Adil Haimoura
  * * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
  * in the Software without restriction, including without limitation the rights
@@ -17,7 +17,7 @@
  * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
  * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
  * SOFTWARE.
- adilhaimoura@gmail.com
+ * email: adilhaimoura@gmail.com
  */
 
 #include <iostream>
@@ -52,26 +52,38 @@ constexpr const char* BG_RED   = "\033[41m";
 
 std::atomic<bool> interrupted(false);
 
-// Function to get the first active inhibitor description from systemd
+// Function to detect inhibitors (Systemd-aware with Generic Fallback)
 std::string get_inhibitor_reason() {
     char buffer[128];
-    std::string result = "";
-    // Note: This specifically targets systemd. See documentation for non-systemd distros.
-    std::string cmd = "systemd-inhibit --list --mode=block --no-pager 2>/dev/null | grep 'shutdown' | head -n 1 | awk -F'  +' '{print $1 \" (\" $4 \")\"}'";
-    
     auto deleter = [](FILE* f) { if (f) pclose(f); };
-    std::unique_ptr<FILE, decltype(deleter)> pipe(popen(cmd.c_str(), "r"), deleter);
-    
-    if (!pipe) return "";
 
-    if (fgets(buffer, sizeof(buffer), pipe.get()) != nullptr) {
-        result = buffer;
-        if (!result.empty() && result[result.length()-1] == '\n') 
-            result.erase(result.length()-1);
+    // 1. Check if systemd-inhibit exists (Feature Detection)
+    if (std::system("command -v systemd-inhibit >/dev/null 2>&1") == 0) {
+        std::string cmd = "systemd-inhibit --list --mode=block --no-pager 2>/dev/null | grep 'shutdown' | head -n 1 | awk -F'  +' '{print $1 \" (\" $4 \")\"}'";
+        std::unique_ptr<FILE, decltype(deleter)> pipe(popen(cmd.c_str(), "r"), deleter);
+        if (pipe && fgets(buffer, sizeof(buffer), pipe.get())) {
+            std::string res = buffer;
+            if (!res.empty()) {
+                if (res.back() == '\n') res.pop_back();
+                return res;
+            }
+        }
+    } else {
+        // 2. Fallback for Non-Systemd Distros (Generic Process Watchlist)
+        std::string fallback = "pgrep -l 'ffmpeg|vlc|smplayer|steam|obs' | head -n 1";
+        std::unique_ptr<FILE, decltype(deleter)> pipe(popen(fallback.c_str(), "r"), deleter);
+        if (pipe && fgets(buffer, sizeof(buffer), pipe.get())) {
+            std::string res = buffer;
+            if (!res.empty()) {
+                if (res.back() == '\n') res.pop_back();
+                return "Active Process: " + res;
+            }
+        }
     }
-    return result;
+    return "";
 }
 
+// TUI Raw Mode Toggle
 void set_raw_mode(bool enable) {
     static struct termios oldt;
     static bool saved = false;
@@ -103,10 +115,10 @@ int term_width() {
 std::string strip_ansi(const std::string& s) {
     std::string result;
     bool in_escape = false;
-    for (size_t i = 0; i < s.size(); ++i) {
-        if (!in_escape && s[i] == '\033') { in_escape = true; continue; }
-        if (!in_escape) result += s[i];
-        else if (s[i] == 'm') in_escape = false;
+    for (char c : s) {
+        if (!in_escape && c == '\033') { in_escape = true; continue; }
+        if (!in_escape) result += c;
+        else if (c == 'm') in_escape = false;
     }
     return result;
 }
@@ -169,6 +181,7 @@ int countdown(int total_seconds, bool reboot) {
     int width = term_width(); if (width < 45) width = 45;
     bool focus_shutdown = true;
 
+    // HIGH-PRECISION: Compare against static target time
     auto start_time = std::chrono::steady_clock::now();
     auto target_time = start_time + std::chrono::seconds(total_seconds);
 
@@ -236,19 +249,23 @@ int main(int argc, char* argv[]) {
         }
     }
 
+    // --- STEP 1: SMART INHIBITOR CHECK ---
     std::string blocker = get_inhibitor_reason();
     if (!blocker.empty()) {
-        std::cout << "\033[31m[Critical Error]:\033[0m Shutdown blocked by: " << YELLOW << blocker << RESET << "\n";
-        std::cout << "Terminating program to protect active processes.\n";
+        std::cout << "\033[31m[Critical Error]:\033[0m Power event blocked by: " << YELLOW << blocker << RESET << "\n";
+        std::cout << "Terminating to prevent data loss or failed execution.\n";
         return 1; 
     }
 
+    // --- STEP 2: SCHEDULE ---
     int total_seconds = minutes * 60;
     std::cout << (reboot ? "Reboot" : "Shutdown") << " scheduled for " << minutes << " min\n";
     std::cout << "Arrows/Tab: Switch | Enter: Confirm | 'c': Cancel\n";
 
+    // --- STEP 3: COUNTDOWN ---
     if (countdown(total_seconds, reboot)) {
         std::cout << "\nExecuting " << (reboot ? "Reboot" : "Shutdown") << " now...\n";
+        // Standard poweroff/reboot commands are generally universal
         std::system(reboot ? "reboot" : "shutdown now");
     } else {
         std::cout << (reboot ? "\n\033[31m Reboot Aborted.\033[0m\n" : "\n\033[31m Shutdown Aborted.\033[0m\n");
