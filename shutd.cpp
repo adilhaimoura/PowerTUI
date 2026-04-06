@@ -234,6 +234,19 @@ int countdown(int total_seconds, bool reboot) {
     return (!interrupted.load()) ? 1 : 0;
 }
 
+void print_usage(const char* prog_name) {
+    std::cout << GREEN << "PowerTUI (shutd)" << RESET << " - High-precision shutdown/reboot wrapper\n\n"
+              << "Usage: " << prog_name << " [options] [minutes]\n\n"
+              << "Options:\n"
+              << "  -h, -s, --shutdown   Schedule a shutdown (default)\n"
+              << "  -r, --reboot         Schedule a reboot\n"
+              << "  --help, -?           Display this help message\n\n"
+              << "Examples:\n"
+              << "  " << prog_name << " 5          # Shutdown in 5 minutes\n"
+              << "  " << prog_name << " -r 10      # Reboot in 10 minutes\n"
+              << "  " << prog_name << " -s 1       # Shutdown in 1 minute\n\n";
+}
+
 int main(int argc, char* argv[]) {
     std::signal(SIGINT, handle_signal);
     std::signal(SIGTSTP, handle_signal);
@@ -241,11 +254,43 @@ int main(int argc, char* argv[]) {
     bool reboot = false;
     int minutes = 1;
 
-    if (argc == 3) {
-        std::string mode = argv[1];
-        if (is_positive(argv[2])) {
-            reboot = (mode == "-r");
-            minutes = std::stoi(argv[2]);
+    // --- ARGUMENT PARSING ---
+    if (argc > 1) {
+        std::string arg1 = argv[1];
+
+        // Check for help flags
+        if (arg1 == "--help"  || arg1 == "-?" || arg1 == "--h" || arg1 == "-help") {
+            print_usage(argv[0]);
+            return 0;
+        }
+
+        // Case 1: Just a number (e.g., 'shutd 5')
+        if (argc == 2 && is_positive(arg1)) {
+            minutes = std::stoi(arg1);
+        }
+        // Case 2: Flag and a number (e.g., 'shutd -r 10')
+        else if (argc == 3) {
+            if (arg1 == "-r" || arg1 == "--reboot") {
+                reboot = true;
+            } else if (arg1 == "-s" ||arg1 == "-h" || arg1 == "--shutdown") {
+                reboot = false;
+            } else {
+                std::cerr << RED << "Error: Unknown flag '" << arg1 << "'" << RESET << "\n";
+                print_usage(argv[0]);
+                return 1;
+            }
+
+            if (is_positive(argv[2])) {
+                minutes = std::stoi(argv[2]);
+            } else {
+                std::cerr << RED << "Error: '" << argv[2] << "' is not a valid number of minutes." << RESET << "\n";
+                return 1;
+            }
+        }
+        // Case 3: Invalid number of arguments
+        else {
+            print_usage(argv[0]);
+            return 1;
         }
     }
 
@@ -260,12 +305,11 @@ int main(int argc, char* argv[]) {
     // --- STEP 2: SCHEDULE ---
     int total_seconds = minutes * 60;
     std::cout << (reboot ? "Reboot" : "Shutdown") << " scheduled for " << minutes << " min\n";
-    std::cout << "Arrows/Tab: Switch | Enter: Confirm | 'c': Cancel\n";
+    std::cout << "Arrows/Tab/Space: Switch | Enter: Confirm | 'c': Cancel\n";
 
     // --- STEP 3: COUNTDOWN ---
     if (countdown(total_seconds, reboot)) {
         std::cout << "\nExecuting " << (reboot ? "Reboot" : "Shutdown") << " now...\n";
-        // Standard poweroff/reboot commands are generally universal
         std::system(reboot ? "reboot" : "shutdown now");
     } else {
         std::cout << (reboot ? "\n\033[31m Reboot Aborted.\033[0m\n" : "\n\033[31m Shutdown Aborted.\033[0m\n");
