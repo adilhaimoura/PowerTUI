@@ -57,22 +57,17 @@ Run a standard 1-minute shutdown countdown:
     shutd
 
 ### Options
+Command                             Description
 
-Command
+`shutd --help`               Show help. 
 
-Description
+`shutd`                       Schedules a shutdown in **1 minute** (default).
 
-`shutd`
+`shutd -s <min>`             Schedules a **shutdown** in `<min>` minutes. 
 
-Schedules a shutdown in **1 minute** (default).
+`shutd -r <min>`             Schedules a **reboot** in `<min>` minutes.
 
-`shutd -r <min>`
-
-Schedules a **reboot** in `<min>` minutes.
-
-`shutd -h <min>`
-
-Schedules a **shutdown** in `<min>` minutes.
+`shutd -h <min>`             Schedules a **shutdown** in `<min>` minutes. (compatibility with shutdown)
 
 **Examples:**
 
@@ -80,6 +75,8 @@ Schedules a **shutdown** in `<min>` minutes.
     shutd -r 10
     
     # Shutdown in 5 minutes
+    shutd 5
+    shutd -s 5
     shutd -h 5
 
 ⌨️ Controls
