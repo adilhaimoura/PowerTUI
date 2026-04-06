@@ -1,6 +1,6 @@
 /*
  * PowerTUI (shutd) - A High-Precision Universal Shutdown/Reboot Wrapper
- * * MIT License
+ * MIT License
  * Copyright (c) 2026 Adil Haimoura
  * * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -17,7 +17,7 @@
  * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
  * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
  * SOFTWARE.
- * email: adilhaimoura@gmail.com
+ * * email: adilhaimoura@gmail.com
  */
 
 #include <iostream>
@@ -38,6 +38,9 @@
 #include <cstdio>
 #include <memory>
 
+// Version Constant
+constexpr const char* VERSION = "v1.0.0";
+
 // ANSI Colors
 constexpr const char* GREEN  = "\033[32m";
 constexpr const char* YELLOW = "\033[33m";
@@ -57,7 +60,6 @@ std::string get_inhibitor_reason() {
     char buffer[128];
     auto deleter = [](FILE* f) { if (f) pclose(f); };
 
-    // 1. Check if systemd-inhibit exists (Feature Detection)
     if (std::system("command -v systemd-inhibit >/dev/null 2>&1") == 0) {
         std::string cmd = "systemd-inhibit --list --mode=block --no-pager 2>/dev/null | grep 'shutdown' | head -n 1 | awk -F'  +' '{print $1 \" (\" $4 \")\"}'";
         std::unique_ptr<FILE, decltype(deleter)> pipe(popen(cmd.c_str(), "r"), deleter);
@@ -69,7 +71,6 @@ std::string get_inhibitor_reason() {
             }
         }
     } else {
-        // 2. Fallback for Non-Systemd Distros (Generic Process Watchlist)
         std::string fallback = "pgrep -l 'ffmpeg|vlc|smplayer|steam|obs' | head -n 1";
         std::unique_ptr<FILE, decltype(deleter)> pipe(popen(fallback.c_str(), "r"), deleter);
         if (pipe && fgets(buffer, sizeof(buffer), pipe.get())) {
@@ -83,17 +84,12 @@ std::string get_inhibitor_reason() {
     return "";
 }
 
-// TUI Raw Mode Toggle
 void set_raw_mode(bool enable) {
     static struct termios oldt;
     static bool saved = false;
     struct termios newt;
-
     if (enable) {
-        if (!saved) {
-            if (tcgetattr(STDIN_FILENO, &oldt) == -1) return;
-            saved = true;
-        }
+        if (!saved) { tcgetattr(STDIN_FILENO, &oldt); saved = true; }
         newt = oldt;
         newt.c_lflag &= ~(ICANON | ECHO | ISIG); 
         tcsetattr(STDIN_FILENO, TCSANOW, &newt);
@@ -137,7 +133,6 @@ void draw_buttons(int width, bool focus_shutdown, bool is_reboot) {
     int total_len = (int)b1.size() + 3 + (int)b2.size();
     int left_pad = (inner - total_len) / 2;
     if (left_pad < 0) left_pad = 0;
-
     std::cout << "│ ";
     for (int i = 0; i < left_pad; ++i) std::cout << " ";
     if (focus_shutdown) std::cout << BG_WHITE << RED << b1 << RESET; else std::cout << b1;
@@ -156,22 +151,17 @@ void draw_ui(int width, const std::string& timer_line, int total, int remaining,
     std::string clean = strip_ansi(timer_line);
     int pad = inner - static_cast<int>(clean.size());
     if (pad < 0) pad = 0;
-
     std::cout << "┌";
     for (int i = 0; i < width - 2; ++i) std::cout << "─";
     std::cout << "┐\n";
-
     std::cout << "│ " << timer_line << std::string(pad, ' ') << " │\n";
-
     std::cout << "│ ";
     for (int i = 0; i < inner; ++i) {
         if (i < filled) std::cout << (alert ? BG_RED : BG_WHITE) << " ";
         else std::cout << BG_GRAY << " ";
     }
     std::cout << RESET << " │\n";
-
     draw_buttons(width, focus_shutdown, is_reboot);
-
     std::cout << "└";
     for (int i = 0; i < width - 2; ++i) std::cout << "─";
     std::cout << "┘\n";
@@ -180,38 +170,28 @@ void draw_ui(int width, const std::string& timer_line, int total, int remaining,
 int countdown(int total_seconds, bool reboot) {
     int width = term_width(); if (width < 45) width = 45;
     bool focus_shutdown = true;
-
-    // HIGH-PRECISION: Compare against static target time
     auto start_time = std::chrono::steady_clock::now();
     auto target_time = start_time + std::chrono::seconds(total_seconds);
-
     std::cout << "\n\n\n\n";
     set_raw_mode(true);
-
     while (!interrupted.load()) {
         auto now = std::chrono::steady_clock::now();
         auto diff = std::chrono::duration_cast<std::chrono::seconds>(target_time - now).count();
-        
         int remaining = static_cast<int>(diff);
         if (remaining < 0) break;
-
         std::cout << "\033[5F"; 
         int min = remaining / 60;
         int sec = remaining % 60;
         bool alert = (remaining <= 10);
-
         std::ostringstream line;
         line << (alert ? RED : GREEN) << (reboot ? "Reboot in: " : "Shutdown in: ") << RESET
              << (alert ? BLINK : "") << (alert ? RED : YELLOW)
              << std::setw(2) << std::setfill('0') << min << ":"
              << std::setw(2) << std::setfill('0') << sec << RESET;
-
         draw_ui(width, line.str(), total_seconds, remaining, focus_shutdown, reboot);
         std::fflush(stdout);
-
         fd_set readfds; FD_ZERO(&readfds); FD_SET(STDIN_FILENO, &readfds);
         struct timeval tv = {0, 50000}; 
-        
         if (select(STDIN_FILENO + 1, &readfds, nullptr, nullptr, &tv) > 0) {
             char ch;
             if (read(STDIN_FILENO, &ch, 1) == 1) {
@@ -229,18 +209,18 @@ int countdown(int total_seconds, bool reboot) {
             }
         }
     }
-    
     set_raw_mode(false);
     return (!interrupted.load()) ? 1 : 0;
 }
 
 void print_usage(const char* prog_name) {
-    std::cout << GREEN << "PowerTUI (shutd)" << RESET << " - High-precision shutdown/reboot wrapper\n\n"
+    std::cout << GREEN << "PowerTUI (shutd) " << VERSION << RESET << " - High-precision shutdown/reboot wrapper\n"
+              << "Copyright (c) 2026 Adil Haimoura <adilhaimoura@gmail.com>\n\n"
               << "Usage: " << prog_name << " [options] [minutes]\n\n"
               << "Options:\n"
-              << "  -h, -s, --shutdown   Schedule a shutdown (default)\n"
-              << "  -r, --reboot         Schedule a reboot\n"
-              << "  --help, -?           Display this help message\n\n"
+              << "  -s, --shutdown   Schedule a shutdown (default)\n"
+              << "  -r, --reboot     Schedule a reboot\n"
+              << "  -h, --help, -?   Display this help message\n\n"
               << "Examples:\n"
               << "  " << prog_name << " 5          # Shutdown in 5 minutes\n"
               << "  " << prog_name << " -r 10      # Reboot in 10 minutes\n"
@@ -254,66 +234,49 @@ int main(int argc, char* argv[]) {
     bool reboot = false;
     int minutes = 1;
 
-    // --- ARGUMENT PARSING ---
     if (argc > 1) {
         std::string arg1 = argv[1];
-
-        // Check for help flags
-        if (arg1 == "--help"  || arg1 == "-?" || arg1 == "--h" || arg1 == "-help") {
+        if (arg1 == "--help" || arg1 == "-h" || arg1 == "-?" || arg1 == "--h" || arg1 == "-help") {
             print_usage(argv[0]);
             return 0;
         }
-
-        // Case 1: Just a number (e.g., 'shutd 5')
         if (argc == 2 && is_positive(arg1)) {
             minutes = std::stoi(arg1);
-        }
-        // Case 2: Flag and a number (e.g., 'shutd -r 10')
-        else if (argc == 3) {
-            if (arg1 == "-r" || arg1 == "--reboot") {
-                reboot = true;
-            } else if (arg1 == "-s" ||arg1 == "-h" || arg1 == "--shutdown") {
-                reboot = false;
-            } else {
-                std::cerr << RED << "Error: Unknown flag '" << arg1 << "'" << RESET << "\n";
+        } else if (argc == 3) {
+            if (arg1 == "-r" || arg1 == "--reboot") reboot = true;
+            else if (arg1 == "-s" || arg1 == "--shutdown") reboot = false;
+            else {
+                std::cerr << RED << "[" << VERSION << "] Error: Unknown flag '" << arg1 << "'" << RESET << "\n";
                 print_usage(argv[0]);
                 return 1;
             }
-
-            if (is_positive(argv[2])) {
-                minutes = std::stoi(argv[2]);
-            } else {
-                std::cerr << RED << "Error: '" << argv[2] << "' is not a valid number of minutes." << RESET << "\n";
+            if (is_positive(argv[2])) minutes = std::stoi(argv[2]);
+            else {
+                std::cerr << RED << "[" << VERSION << "] Error: '" << argv[2] << "' is not a valid number." << RESET << "\n";
                 return 1;
             }
-        }
-        // Case 3: Invalid number of arguments
-        else {
+        } else {
             print_usage(argv[0]);
             return 1;
         }
     }
 
-    // --- STEP 1: SMART INHIBITOR CHECK ---
     std::string blocker = get_inhibitor_reason();
     if (!blocker.empty()) {
-        std::cout << "\033[31m[Critical Error]:\033[0m Power event blocked by: " << YELLOW << blocker << RESET << "\n";
+        std::cout << RED << "[" << VERSION << " Critical Error]:" << RESET << " Power event blocked by: " << YELLOW << blocker << RESET << "\n";
         std::cout << "Terminating to prevent data loss or failed execution.\n";
         return 1; 
     }
 
-    // --- STEP 2: SCHEDULE ---
     int total_seconds = minutes * 60;
-    std::cout << (reboot ? "Reboot" : "Shutdown") << " scheduled for " << minutes << " min\n";
+    std::cout << GREEN << "PowerTUI " << VERSION << RESET << " | " << (reboot ? "Reboot" : "Shutdown") << " scheduled for " << minutes << " min\n";
     std::cout << "Arrows/Tab/Space: Switch | Enter: Confirm | 'c': Cancel\n";
 
-    // --- STEP 3: COUNTDOWN ---
     if (countdown(total_seconds, reboot)) {
         std::cout << "\nExecuting " << (reboot ? "Reboot" : "Shutdown") << " now...\n";
         std::system(reboot ? "reboot" : "shutdown now");
     } else {
         std::cout << (reboot ? "\n\033[31m Reboot Aborted.\033[0m\n" : "\n\033[31m Shutdown Aborted.\033[0m\n");
     }
-
     return 0;
 }
