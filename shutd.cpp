@@ -218,9 +218,9 @@ void print_usage(const char* prog_name) {
               << "Copyright (c) 2026 Adil Haimoura <adilhaimoura@gmail.com>\n\n"
               << "Usage: " << prog_name << " [options] [minutes]\n\n"
               << "Options:\n"
-              << "  -s, --shutdown   Schedule a shutdown (default)\n"
-              << "  -r, --reboot     Schedule a reboot\n"
-              << "  -h, --help, -?   Display this help message\n\n"
+              << "  -h, -s, --shutdown   Schedule a shutdown (default)\n"
+              << "  -r, --reboot         Schedule a reboot\n"
+              << "  --help, -?           Display this help message\n\n"
               << "Examples:\n"
               << "  " << prog_name << " 5          # Shutdown in 5 minutes\n"
               << "  " << prog_name << " -r 10      # Reboot in 10 minutes\n"
@@ -236,7 +236,7 @@ int main(int argc, char* argv[]) {
 
     if (argc > 1) {
         std::string arg1 = argv[1];
-        if (arg1 == "--help" || arg1 == "-h" || arg1 == "-?" || arg1 == "--h" || arg1 == "-help") {
+        if (arg1 == "--help" || arg1 == "-?" || arg1 == "--h" || arg1 == "-help") {
             print_usage(argv[0]);
             return 0;
         }
@@ -244,7 +244,7 @@ int main(int argc, char* argv[]) {
             minutes = std::stoi(arg1);
         } else if (argc == 3) {
             if (arg1 == "-r" || arg1 == "--reboot") reboot = true;
-            else if (arg1 == "-s" || arg1 == "--shutdown") reboot = false;
+            else if (arg1 == "-s" || arg1 == "-h" || arg1 == "--shutdown") reboot = false;
             else {
                 std::cerr << RED << "[" << VERSION << "] Error: Unknown flag '" << arg1 << "'" << RESET << "\n";
                 print_usage(argv[0]);
