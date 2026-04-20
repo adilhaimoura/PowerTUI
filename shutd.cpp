@@ -39,7 +39,7 @@
 #include <memory>
 
 // Version Constant
-constexpr const char* VERSION = "v1.0.0";
+constexpr const char* VERSION = "v1.1.0";
 
 // ANSI Colors
 constexpr const char* GREEN  = "\033[32m";
@@ -57,33 +57,67 @@ std::atomic<bool> interrupted(false);
 
 // Function to detect inhibitors (Systemd-aware with Generic Fallback)
 std::string get_inhibitor_reason() {
-    char buffer[128];
+    char buffer[512];
     auto deleter = [](FILE* f) { if (f) pclose(f); };
 
-    if (std::system("command -v systemd-inhibit >/dev/null 2>&1") == 0) {
-        std::string cmd = "systemd-inhibit --list --mode=block --no-pager 2>/dev/null | grep 'shutdown' | head -n 1 | awk -F'  +' '{print $1 \" (\" $4 \")\"}'";
-        std::unique_ptr<FILE, decltype(deleter)> pipe(popen(cmd.c_str(), "r"), deleter);
-        if (pipe && fgets(buffer, sizeof(buffer), pipe.get())) {
-            std::string res = buffer;
-            if (!res.empty()) {
-                if (res.back() == '\n') res.pop_back();
-                return res;
+    // --- STEP 1: D-Bus (Cinnamon/GNOME/KDE aware) ---
+    // Best for catching "Browsers are downloading or streaming"
+    if (std::system("command -v dbus-send >/dev/null 2>&1") == 0) {
+        std::string dbus_cmd = "dbus-send --print-reply --dest=org.gnome.SessionManager "
+                               "/org/gnome/SessionManager org.gnome.SessionManager.GetInhibitors 2>/dev/null | "
+                               "grep 'object path' | head -n 1 | cut -d'\"' -f2";
+        
+        std::string path;
+        {
+            std::unique_ptr<FILE, decltype(deleter)> pipe(popen(dbus_cmd.c_str(), "r"), deleter);
+            if (pipe && fgets(buffer, sizeof(buffer), pipe.get())) {
+                path = buffer;
+                if (!path.empty() && path.back() == '\n') path.pop_back();
             }
         }
-    } else {
-        std::string fallback = "pgrep -l 'ffmpeg|vlc|smplayer|steam|obs' | head -n 1";
-        std::unique_ptr<FILE, decltype(deleter)> pipe(popen(fallback.c_str(), "r"), deleter);
-        if (pipe && fgets(buffer, sizeof(buffer), pipe.get())) {
-            std::string res = buffer;
-            if (!res.empty()) {
-                if (res.back() == '\n') res.pop_back();
-                return "Active Process: " + res;
+
+        if (!path.empty()) {
+            std::string detail_cmd = "dbus-send --print-reply --dest=org.gnome.SessionManager " + path + 
+                                     " org.gnome.SessionManager.Inhibitor.GetAppId 2>/dev/null | grep 'string' | cut -d'\"' -f2";
+            std::unique_ptr<FILE, decltype(deleter)> detail_pipe(popen(detail_cmd.c_str(), "r"), deleter);
+            if (detail_pipe && fgets(buffer, sizeof(buffer), detail_pipe.get())) {
+                std::string app = buffer;
+                if (!app.empty()) {
+                    if (app.back() == '\n') app.pop_back();
+                    return app + " (via Session Manager)";
+                }
             }
         }
     }
+
+    // --- STEP 2: Systemd Fallback ---
+    if (std::system("command -v systemd-inhibit >/dev/null 2>&1") == 0) {
+        std::string sysd_cmd = "systemd-inhibit --list --no-pager 2>/dev/null | grep 'shutdown' | tail -n 1 | awk '{print $5}'";
+        std::unique_ptr<FILE, decltype(deleter)> pipe(popen(sysd_cmd.c_str(), "r"), deleter);
+        if (pipe && fgets(buffer, sizeof(buffer), pipe.get())) {
+            std::string res = buffer;
+            if (res.length() > 1) {
+                if (res.back() == '\n') res.pop_back();
+                return res + " (systemd-lock)";
+            }
+        }
+    }
+
+    // --- STEP 3: Non-Systemd / Generic Fallback ---
+    // If no system-wide inhibitor is found, check for high-priority media/work apps
+    // This works on Void, Gentoo, Artix, etc.
+    std::string fallback = "pgrep -l 'ffmpeg|vlc|obs|steam|render|iso-writer' | head -n 1";
+    std::unique_ptr<FILE, decltype(deleter)> pipe(popen(fallback.c_str(), "r"), deleter);
+    if (pipe && fgets(buffer, sizeof(buffer), pipe.get())) {
+        std::string res = buffer;
+        if (!res.empty()) {
+            if (res.back() == '\n') res.pop_back();
+            return "Process active: " + res;
+        }
+    }
+
     return "";
 }
-
 void set_raw_mode(bool enable) {
     static struct termios oldt;
     static bool saved = false;
