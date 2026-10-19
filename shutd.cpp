@@ -43,7 +43,7 @@
 #include <memory>
 
 // Version Constant
-constexpr const char* VERSION = "v1.2.0";
+constexpr const char* VERSION = "v1.2.1";
 
 // ANSI Colors
 constexpr const char* GREEN   = "\033[32m";
@@ -133,14 +133,20 @@ std::string get_inhibitor_reason() {
         }
     }
 
-    // --- STEP 2: Systemd Fallback ---
+    // --- STEP 2: Systemd Fallback (Only 'block' mode on 'shutdown', immune to spaces in WHO/WHY) ---
     if (std::system("command -v systemd-inhibit >/dev/null 2>&1") == 0) {
-        std::string sysd_cmd = "systemd-inhibit --list --no-pager 2>/dev/null | grep 'shutdown' | tail -n 1 | awk '{print $5}'";
+        std::string sysd_cmd =
+            "systemd-inhibit --list --what=shutdown --mode=block --no-legend --no-pager 2>/dev/null | "
+            "awk '$NF == \"block\" { "
+            "for (i = 2; i <= NF - 3; i++) { "
+            "if ($i ~ /^[0-9]+$/ && $(i+2) ~ /^[0-9]+$/ && $(i+4) ~ /(^|:)shutdown(:|$)/) { "
+            "print $(i+3); exit "
+            "} } }'";
         std::unique_ptr<FILE, decltype(deleter)> pipe(popen(sysd_cmd.c_str(), "r"), deleter);
         if (pipe && fgets(buffer, sizeof(buffer), pipe.get())) {
             std::string res = buffer;
-            if (res.length() > 1) {
-                if (res.back() == '\n') res.pop_back();
+            if (!res.empty() && res.back() == '\n') res.pop_back();
+            if (!res.empty()) {
                 return res + " (systemd-lock)";
             }
         }
